@@ -8,11 +8,20 @@ on:
 
 jobs:
   build:
-    name: Build and Release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact_name: LotroArchiver-linux-x64.zip
+            binary_name: LotroArchiver
+          - os: windows-latest
+            target: win-x64
+            artifact_name: LotroArchiver-win-x64.zip
+            binary_name: LotroArchiver.exe
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,22 +31,47 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Publish Windows
-        run: |
-          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -o publish/win-x64
-          cd publish/win-x64
-          zip -r ../../LotroArchiver-win-x64.zip *
+      - name: Publish Native AOT
+        run: dotnet publish LotroArchiver.csproj -c Release -r ${{ matrix.target }} -o publish
 
-      - name: Publish Linux
+      - name: Package Linux Binary
+        if: runner.os == 'Linux'
         run: |
-          dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -o publish/linux-x64
-          cd publish/linux-x64
-          zip -r ../../LotroArchiver-linux-x64.zip *
+          cd publish
+          zip -r ../${{ matrix.artifact_name }} ${{ matrix.binary_name }}
+
+      - name: Package Windows Binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "publish/${{ matrix.binary_name }}" -DestinationPath "${{ matrix.artifact_name }}"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.artifact_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
-            LotroArchiver-win-x64.zip
             LotroArchiver-linux-x64.zip
+            LotroArchiver-win-x64.zip
           generate_release_notes: true
