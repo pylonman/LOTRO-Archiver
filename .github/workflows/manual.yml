@@ -1,0 +1,76 @@
+name: Release-AOT
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact_name: LotroArchiver-linux-x64.zip
+            binary_name: LotroArchiver
+          - os: windows-latest
+            target: win-x64
+            artifact_name: LotroArchiver-win-x64.zip
+            binary_name: LotroArchiver.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish Native AOT
+        run: dotnet publish LotroArchiver.csproj -c Release -r ${{ matrix.target }} -p:PublishAot=true -o publish
+
+      - name: Package Linux Binary
+        if: runner.os == 'Linux'
+        run: |
+          cd publish
+          zip -r ../${{ matrix.artifact_name }} ${{ matrix.binary_name }}
+
+      - name: Package Windows Binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "publish/${{ matrix.binary_name }}" -DestinationPath "${{ matrix.artifact_name }}"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.artifact_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            LotroArchiver-linux-x64.zip
+            LotroArchiver-win-x64.zip
+          generate_release_notes: true
