@@ -37,10 +37,21 @@ public static class Archiver
             if (!File.Exists(zipPath))
                 return Result.Failure($"Backup file not found: {zipPath}");
 
+            var rootPath = Path.GetFullPath(config.ProfilePath);
+            var rootPathWithSeparator = Path.TrimEndingDirectorySeparator(rootPath) + Path.DirectorySeparatorChar;
+
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
             using var archive = ZipFile.OpenRead(zipPath);
             foreach (var entry in archive.Entries)
             {
-                var destinationPath = Path.Combine(config.ProfilePath, entry.FullName);
+                var destinationPath = Path.GetFullPath(Path.Combine(rootPath, entry.FullName));
+                
+                if (!destinationPath.StartsWith(rootPathWithSeparator, comparison))
+                    return Result.Failure($"Malicious zip entry detected: {entry.FullName}");
+
                 var directoryPath = Path.GetDirectoryName(destinationPath);
                 
                 if (!string.IsNullOrEmpty(directoryPath) && !Directory.Exists(directoryPath))

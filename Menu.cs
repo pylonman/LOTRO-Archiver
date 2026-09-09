@@ -95,11 +95,23 @@ public static class Menu
         }
     }
 
+    private static bool IsGameRunning()
+    {
+        return Process.GetProcesses().Any(p => 
+            p.ProcessName.StartsWith("lotroclient", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static (bool KeepRunning, AppConfig Config) HandleMenuSelection(MenuAction choice, AppConfig config, string configPath)
     {
         switch (choice)
         {
             case MenuAction.BackupProfile:
+                if (IsGameRunning())
+                {
+                    AnsiConsole.MarkupLine("[red]Error: The game is currently running. Please close it before backing up.[/]");
+                    WaitForInput();
+                    break;
+                }
                 AnsiConsole.Status().Start("Backing up...", ctx =>
                 {
                     var res = Archiver.Backup(config);
@@ -109,6 +121,12 @@ public static class Menu
                 WaitForInput();
                 break;
             case MenuAction.RestoreProfile:
+                if (IsGameRunning())
+                {
+                    AnsiConsole.MarkupLine("[red]Error: The game is currently running. Please close it before restoring.[/]");
+                    WaitForInput();
+                    break;
+                }
                 if (!Directory.Exists(config.BackupDirectory))
                 {
                     AnsiConsole.MarkupLine("[yellow]No backup directory found.[/]");
