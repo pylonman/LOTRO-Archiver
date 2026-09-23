@@ -4,6 +4,8 @@ namespace LotroArchiver;
 
 public static class Archiver
 {
+    private const string ExcludedRootDirectory = "CEF";
+
     public static Result Backup(AppConfig config)
     {
         try
@@ -21,12 +23,46 @@ public static class Archiver
             if (File.Exists(zipPath))
                 File.Delete(zipPath);
 
-            ZipFile.CreateFromDirectory(config.ProfilePath, zipPath);
+            var rootProfileDir = new DirectoryInfo(config.ProfilePath);
+
+            using (var zipStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
+            {
+                // 1. Add top-level files (e.g. lotro.keymap, UserPreferences.ini)
+                foreach (var file in rootProfileDir.GetFiles())
+                {
+                    archive.CreateEntryFromFile(file.FullName, file.Name, CompressionLevel.Optimal);
+                }
+
+                // 2. Add top-level directories, strictly bypassing the root CEF folder
+                foreach (var subDir in rootProfileDir.GetDirectories())
+                {
+                    if (string.Equals(subDir.Name, ExcludedRootDirectory, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    AddDirectoryContents(archive, subDir, rootProfileDir.FullName);
+                }
+            }
+
             return Result.Success();
         }
         catch (Exception ex)
         {
             return Result.Failure(ex.Message);
+        }
+    }
+
+    private static void AddDirectoryContents(ZipArchive archive, DirectoryInfo dir, string rootPath)
+    {
+        foreach (var file in dir.GetFiles())
+        {
+            var relativePath = Path.GetRelativePath(rootPath, file.FullName).Replace('\\', '/');
+            archive.CreateEntryFromFile(file.FullName, relativePath, CompressionLevel.Optimal);
+        }
+
+        foreach (var subDir in dir.GetDirectories())
+        {
+            AddDirectoryContents(archive, subDir, rootPath);
         }
     }
 
