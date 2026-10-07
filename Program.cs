@@ -16,26 +16,30 @@ if (!Directory.Exists(appDataPath)) Directory.CreateDirectory(appDataPath);
 var configResult = Configuration.Load(configPath);
 
 // Auto mode
-if (args.Contains("-auto"))
+if (args.Contains("-auto", StringComparer.OrdinalIgnoreCase))
 {
     if (!configResult.IsSuccess)
     {
-        Console.WriteLine("Error: Configuration not found. Please run the tool interactively first to setup paths.");
+        Console.Error.WriteLine("Error: Configuration not found. Please run the tool interactively first to setup paths.");
         Environment.Exit(1);
     }
-    
+
+    if (GameProcess.IsRunning())
+    {
+        Console.Error.WriteLine("Backup skipped: LOTRO is currently running. Close the game and try again.");
+        Environment.Exit(2);
+    }
+
     Console.WriteLine("Starting auto-backup...");
     var backupResult = Archiver.Backup(configResult.Value!);
     if (backupResult.IsSuccess)
     {
-        Console.WriteLine("Backup completed successfully.");
+        Console.WriteLine($"Backup completed successfully: {backupResult.Value}");
         Environment.Exit(0);
     }
-    else
-    {
-        Console.WriteLine($"Backup failed: {backupResult.Error}");
-        Environment.Exit(1);
-    }
+
+    Console.Error.WriteLine($"Backup failed: {backupResult.Error}");
+    Environment.Exit(1);
 }
 
 // Interactive Mode

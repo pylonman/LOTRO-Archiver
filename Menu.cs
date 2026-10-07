@@ -21,18 +21,18 @@ public static class Menu
         string profilePath = DetectOrAsk("Profile Data", profilePaths);
 
         // 2. Detect Install Path (Steam or Standalone)
-    
+
         var installPaths = SteamDetector.FindLotroInstallPaths();
         string installPath = DetectOrAsk("Game Installation", installPaths);
 
         // 3. Set Backup Path
         var defaultBackup = Path.Combine(docPath, "LotroArchiver", "backup");
-        
+
         var config = new AppConfig(profilePath, installPath, defaultBackup);
-        
+
         var saveResult = Configuration.Save(configPath, config);
         if (!saveResult.IsSuccess) return Result<AppConfig>.Failure(saveResult.Error!);
-        
+
         return Result<AppConfig>.Success(config);
     }
 
@@ -59,12 +59,12 @@ public static class Menu
                 return path;
             }
         }
-        
+
         AnsiConsole.MarkupLine($"[yellow]Could not automatically detect {name}.[/]");
         return AnsiConsole.Prompt(
             new TextPrompt<string>($"Please enter the full path to your [green]{name}[/]:")
-                .Validate(path => Directory.Exists(path) 
-                    ? ValidationResult.Success() 
+                .Validate(path => Directory.Exists(path)
+                    ? ValidationResult.Success()
                     : ValidationResult.Error("[red]Path does not exist[/]")));
     }
 
@@ -75,7 +75,7 @@ public static class Menu
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("LOTRO Archiver").Color(Color.Green));
-            
+
             var table = new Table();
             table.AddColumn("Setting");
             table.AddColumn("Path");
@@ -95,69 +95,87 @@ public static class Menu
         }
     }
 
-    private static bool IsGameRunning()
-    {
-        return Process.GetProcesses().Any(p => 
-            p.ProcessName.StartsWith("lotroclient", StringComparison.OrdinalIgnoreCase));
-    }
-
     private static (bool KeepRunning, AppConfig Config) HandleMenuSelection(MenuAction choice, AppConfig config, string configPath)
     {
         switch (choice)
         {
             case MenuAction.BackupProfile:
-                if (IsGameRunning())
+                if (GameProcess.IsRunning())
                 {
                     AnsiConsole.MarkupLine("[red]Error: The game is currently running. Please close it before backing up.[/]");
                     WaitForInput();
                     break;
                 }
-                AnsiConsole.Status().Start("Backing up...", ctx =>
+
+                Result<string> backupResult = default;
+                AnsiConsole.Status().Start("Backing up...", _ =>
                 {
-                    var res = Archiver.Backup(config);
-                    if (res.IsSuccess) AnsiConsole.MarkupLine("[green]Backup Complete![/]");
-                    else AnsiConsole.MarkupLine($"[red]Backup Failed: {res.Error}[/]");
+                    backupResult = Archiver.Backup(config);
                 });
+
+                if (backupResult.IsSuccess)
+                {
+                    AnsiConsole.MarkupLine("[green]Backup Complete![/]");
+                    AnsiConsole.MarkupLine($"Saved to [green]{Markup.Escape(backupResult.Value!)}[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine($"[red]Backup Failed: {Markup.Escape(backupResult.Error!)}[/]");
+                }
                 WaitForInput();
                 break;
             case MenuAction.RestoreProfile:
-                if (IsGameRunning())
+                if (GameProcess.IsRunning())
                 {
                     AnsiConsole.MarkupLine("[red]Error: The game is currently running. Please close it before restoring.[/]");
                     WaitForInput();
                     break;
                 }
-                if (!Directory.Exists(config.BackupDirectory))
+
+                var backupFiles = Directory.Exists(config.BackupDirectory)
+                    ? new DirectoryInfo(config.BackupDirectory).GetFiles("*.zip")
+                        .OrderByDescending(f => f.LastWriteTimeUtc).ToList()
+                        : [];
+
+                if (backupFiles.Count == 0)
                 {
-                    AnsiConsole.MarkupLine("[yellow]No backup directory found.[/]");
+                    AnsiConsole.MarkupLine("[yellow]No backups found.[/]");
                     WaitForInput();
                     break;
                 }
 
-                var backups = Directory.GetFiles(config.BackupDirectory, "*.zip");
-                if (backups.Length == 0)
+                var selectedName = AnsiConsole.Prompt(
+                    new SelectionPrompt<string> { CancelResult = () => CancelChoice }
+                        .Title("Select a backup to restore: [grey](Esc to cancel)[/]")
+                        .UseConverter(Markup.Escape)
+                        .AddChoices(backupFiles.Select(f => f.Name))
+                        .AddChoices(CancelChoice));
+
+                if (selectedName == CancelChoice) break;
+
+                var confirmed = AnsiConsole.Confirm(
+                    $"This will overwrite files in [green]{Markup.Escape(config.ProfilePath)}[/] with the contents of " +
+                    $"[green]{Markup.Escape(selectedName)}[/]. Your current profile will be saved first. Continue?",
+                    defaultValue: false);
+                if (!confirmed) break;
+
+                Result<string> restoreResult = default;
+                AnsiConsole.Status().Start("Restoring...", _ =>
                 {
-                    AnsiConsole.MarkupLine("[yellow]No backups found.[/]");
-                    WaitForInput();
+                    restoreResult = Archiver.Restore(config, Path.Combine(config.BackupDirectory, selectedName));
+                });
+
+                if (restoreResult.IsSuccess)
+                {
+                    AnsiConsole.MarkupLine("[green]Restore Complete![/]");
+                    if (!string.IsNullOrEmpty(restoreResult.Value))
+                        AnsiConsole.MarkupLine($"Previous profile saved to [green]{Markup.Escape(restoreResult.Value)}[/]");
                 }
                 else
                 {
-                    var selectedBackup = AnsiConsole.Prompt(
-                        new SelectionPrompt<string>()
-                            .Title("Select a backup to restore:")
-                            .AddChoices(backups)
-                            .AddChoices("Cancel"));
-
-                    if (selectedBackup == "Cancel") break;
-
-                    AnsiConsole.Status().Start("Restoring...", ctx =>
-                    {
-                        var res = Archiver.Restore(config, selectedBackup);
-                        if (res.IsSuccess) AnsiConsole.MarkupLine("[green]Restore Complete![/]");
-                        else AnsiConsole.MarkupLine($"[red]Restore Failed: {res.Error}[/]");
-                    });
-                    WaitForInput();
+                    AnsiConsole.MarkupLine($"[red]Restore Failed: {Markup.Escape(restoreResult.Error!)}[/]");
                 }
+                WaitForInput();
                 break;
             case MenuAction.ViewBackups:
                 if (!Directory.Exists(config.BackupDirectory))
@@ -188,9 +206,9 @@ public static class Menu
                 break;
             case MenuAction.OpenFolder:
                 var folderChoice = AnsiConsole.Prompt(
-                    new SelectionPrompt<string>()
-                        .Title("Select a folder to open in your file manager:")
-                        .AddChoices("Profile Folder", "Install Folder", "Backup Folder", "Config Folder", "Cancel"));
+                    new SelectionPrompt<string> { CancelResult = () => CancelChoice }
+                        .Title("Select a folder to open in your file manager: [grey](Esc to cancel)[/]")
+                        .AddChoices("Profile Folder", "Install Folder", "Backup Folder", "Config Folder", CancelChoice));
 
                 if (folderChoice != "Cancel")
                 {
@@ -276,4 +294,6 @@ public static class Menu
         MenuAction.Exit => "Exit",
         _ => action.ToString()
     };
+
+    private const string CancelChoice = "Cancel";
 }
